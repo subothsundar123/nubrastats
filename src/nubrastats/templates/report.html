@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title }}</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 24px; color: #1f2937; }
+    h1, h2 { margin-bottom: 8px; }
+    .meta { color: #6b7280; margin-bottom: 16px; }
+    .section { margin-top: 20px; }
+    img { max-width: 100%; border: 1px solid #e5e7eb; border-radius: 6px; }
+    table { border-collapse: collapse; width: 100%; margin-top: 8px; }
+    th, td { border: 1px solid #e5e7eb; padding: 6px 8px; font-size: 13px; }
+    th { background: #f9fafb; text-align: left; }
+  </style>
+</head>
+<body>
+  <h1>{{ title }}</h1>
+  <div class="meta">
+    {{ date_start }} - {{ date_end }}<br>
+    Analyzed: {{ strategy_label }}{% if benchmark_label %} | Compared with: {{ benchmark_label }}{% endif %}
+    <br>
+    Note: historical prices are treated as paise and converted to rupees; equity is compounded from returns with base capital 100000.
+  </div>
+
+  <div class="section">
+    <h2>Metrics</h2>
+    {{ metrics_table | safe }}
+  </div>
+
+  <div class="section">
+    <h2>Equity Curve</h2>
+    <img src="{{ equity_img }}" alt="Equity Curve">
+  </div>
+
+  <div class="section">
+    <h2>Drawdown</h2>
+    <img src="{{ drawdown_img }}" alt="Drawdown">
+  </div>
+
+  <div class="section">
+    <h2>Monthly Returns Heatmap</h2>
+    <img src="{{ heatmap_img }}" alt="Monthly Heatmap">
+  </div>
+
+  <div class="section">
+    <h2>Rolling Sharpe</h2>
+    <img src="{{ sharpe_img }}" alt="Rolling Sharpe">
+  </div>
+
+  {% if pnl_img %}
+  <div class="section">
+    <h2>Trade PnL Distribution</h2>
+    <img src="{{ pnl_img }}" alt="Trade PnL Distribution">
+  </div>
+  {% endif %}
+</body>
+</html>

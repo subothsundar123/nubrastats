@@ -1,0 +1,16 @@
+include README.md
+include LICENSE
+recursive-include src/nubrastats/templates *.html
+
+prune examples
+prune tests
+prune .pytest_cache
+prune .ruff_cache
+prune dist
+prune build
+prune test_outputs
+prune tmp_plots
+prune _tmp_pytest
+
+global-exclude *.py[cod]
+global-exclude __pycache__/*

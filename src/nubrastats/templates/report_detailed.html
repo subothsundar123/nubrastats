@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title }}</title>
+  <style>
+    body {
+      font-family: "Segoe UI", Arial, sans-serif;
+      margin: 20px;
+      color: #1f2937;
+      background: #f8fafc;
+    }
+    h1, h2, h3 {
+      margin: 0 0 8px;
+      color: #111827;
+    }
+    .meta {
+      color: #4b5563;
+      margin-bottom: 14px;
+      line-height: 1.5;
+      font-size: 14px;
+    }
+    .card {
+      background: #ffffff;
+      border: 1px solid #e5e7eb;
+      border-radius: 10px;
+      padding: 14px;
+      margin-bottom: 14px;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    }
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 14px;
+    }
+    .grid-half {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+    .plot {
+      width: 100%;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      background: #fff;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12.5px;
+      margin-top: 6px;
+    }
+    th, td {
+      border: 1px solid #e5e7eb;
+      padding: 6px 8px;
+      text-align: left;
+    }
+    th {
+      background: #f3f4f6;
+    }
+    .spacer {
+      height: 8px;
+    }
+    @media (max-width: 1080px) {
+      .grid-2, .grid-half {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <h1>{{ title }}</h1>
+  <div class="meta">
+    {{ date_start }} - {{ date_end }}<br>
+    Analyzed: {{ strategy_label }}{% if benchmark_label %} | Compared with: {{ benchmark_label }}{% endif %}<br>
+    Note: historical prices are treated as paise and converted to rupees; report metrics are computed from periodic returns.
+  </div>
+
+  <div class="card grid-2">
+    <div>
+      <h3>Cumulative Returns vs Benchmark</h3>
+      <img class="plot" src="{{ returns_img }}" alt="Cumulative Returns">
+      <div class="spacer"></div>
+      <h3>Cumulative Returns vs Benchmark (Log Scaled)</h3>
+      <img class="plot" src="{{ log_returns_img }}" alt="Log Cumulative Returns">
+      {% if vol_match_img %}
+      <div class="spacer"></div>
+      <h3>Cumulative Returns vs Benchmark (Volatility Matched)</h3>
+      <img class="plot" src="{{ vol_match_img }}" alt="Volatility Matched Returns">
+      {% endif %}
+    </div>
+    <div>
+      <h3>Key Performance Metrics</h3>
+      {{ key_metrics_table | safe }}
+      <div class="spacer"></div>
+      <h3>Period Performance</h3>
+      {{ periods_table | safe }}
+    </div>
+  </div>
+
+  <div class="card grid-half">
+    <div>
+      <h3>EOY Returns vs Benchmark</h3>
+      <img class="plot" src="{{ eoy_img }}" alt="EOY Returns">
+    </div>
+    <div>
+      <h3>EOY Table</h3>
+      {{ eoy_table | safe }}
+    </div>
+  </div>
+
+  <div class="card grid-half">
+    <div>
+      <h3>Distribution of Monthly Returns</h3>
+      <img class="plot" src="{{ dist_img }}" alt="Monthly Distribution">
+      <div class="spacer"></div>
+      <h3>Daily Active Returns</h3>
+      <img class="plot" src="{{ daily_active_img }}" alt="Daily Active Returns">
+    </div>
+    <div>
+      {% if rolling_beta_img %}
+      <h3>Rolling Beta to Benchmark</h3>
+      <img class="plot" src="{{ rolling_beta_img }}" alt="Rolling Beta">
+      <div class="spacer"></div>
+      {% endif %}
+      <h3>Rolling Volatility</h3>
+      <img class="plot" src="{{ rolling_vol_img }}" alt="Rolling Volatility">
+      <div class="spacer"></div>
+      <h3>Rolling Sharpe</h3>
+      <img class="plot" src="{{ rolling_sharpe_img }}" alt="Rolling Sharpe">
+      <div class="spacer"></div>
+      <h3>Rolling Sortino</h3>
+      <img class="plot" src="{{ rolling_sortino_img }}" alt="Rolling Sortino">
+    </div>
+  </div>
+
+  <div class="card grid-half">
+    <div>
+      <h3>{{ strategy_label }} - Worst Drawdown Periods</h3>
+      <img class="plot" src="{{ drawdown_periods_img }}" alt="Drawdown Periods">
+      <div class="spacer"></div>
+      <h3>Underwater Plot</h3>
+      <img class="plot" src="{{ underwater_img }}" alt="Underwater Plot">
+    </div>
+    <div>
+      <h3>Worst Drawdowns</h3>
+      {{ drawdown_table | safe }}
+    </div>
+  </div>
+
+  <div class="card grid-half">
+    <div>
+      <h3>{{ strategy_label }} - Monthly Active Returns (%)</h3>
+      <img class="plot" src="{{ heatmap_img }}" alt="Monthly Heatmap">
+    </div>
+    <div>
+      <h3>{{ strategy_label }} - Return Quantiles</h3>
+      <img class="plot" src="{{ quantiles_img }}" alt="Return Quantiles">
+      {% if pnl_img %}
+      <div class="spacer"></div>
+      <h3>Trade PnL Distribution</h3>
+      <img class="plot" src="{{ pnl_img }}" alt="Trade PnL Distribution">
+      {% endif %}
+    </div>
+  </div>
+</body>
+</html>

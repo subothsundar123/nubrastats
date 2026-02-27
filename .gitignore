@@ -1,0 +1,37 @@
+# Python cache/build artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Packaging/build outputs
+build/
+dist/
+
+# Virtual environments
+.venv/
+.venv-test/
+.venv-testpypi/
+
+# Local test/temp folders
+_tmp_build/
+_tmp_pytest/
+tmp_plots/
+test_outputs/
+nubrastats-plots_1/
+
+# Local generated reports
+*.html
+!README.md
+!src/nubrastats/templates/*.html
+
+# Local credential/db files
+*.db
+*.db.bak
+*.db.dat
+*.db.dir
+.env
