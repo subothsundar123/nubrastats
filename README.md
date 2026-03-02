@@ -2,7 +2,8 @@
 
 `nubrastats` is a Nubra-native helper library for:
 
-- strategy analytics
+- stock performance analytics
+- portfolio performance analytics using symbol + quantity inputs
 - performance plots
 - HTML tearsheet reports
 - Nubra API historical data parsing
@@ -13,13 +14,23 @@ with minimal code.
 
 ## What This Library Does
 
-Standard workflow:
+Standard workflows:
+
+Single-stock workflow:
 
 1. Fetch close prices from Nubra Historical API (`nubrastats.nubra`)
 2. Convert prices to returns (`nubrastats.utils.to_returns`)
 3. Compute performance metrics (`nubrastats.stats`)
 4. Generate charts (`nubrastats.plots`)
 5. Export terminal/HTML reports (`nubrastats.reports`)
+
+Portfolio workflow:
+
+1. Fetch close prices for multiple Nubra symbols
+2. Use symbol quantities plus first-date prices to derive start weights
+3. Build portfolio value, returns, and equity curve
+4. Compare portfolio against optional benchmark
+5. Export terminal/HTML reports and plots
 
 Alternative workflow:
 
@@ -30,17 +41,23 @@ Alternative workflow:
 
 ## Installation
 
+Install from PyPI:
+
+```bash
+pip install nubrastats
+```
+
+If you use Nubra API fetch helpers, install Nubra SDK too:
+
+```bash
+pip install nubra-sdk
+```
+
 Local editable install:
 
 ```bash
 cd nubra-stats
 pip install -e .[dev]
-```
-
-If you use Nubra API fetch helpers, install Nubra SDK:
-
-```bash
-python -m pip install nubra-sdk
 ```
 
 ## Packaging Notes
@@ -136,6 +153,40 @@ actual symbols (for example `RELIANCE` and `NIFTY`) instead of generic names.
 The equity curve represents compounded notional capital (base `100000`) from
 periodic returns, not raw stock price.
 
+## Quick Start (Portfolio)
+
+```python
+from nubra_python_sdk.marketdata.market_data import MarketData
+from nubra_python_sdk.start_sdk import InitNubraSdk, NubraEnv
+import nubrastats as ns
+
+nubra = InitNubraSdk(env=NubraEnv.PROD, env_creds=True)
+md = MarketData(nubra)
+
+result = ns.nubra.analyze_portfolio(
+    md_client=md,
+    positions=[
+        {"symbol": "RELIANCE", "exchange": "NSE", "instrument_type": "STOCK", "quantity": 2},
+        {"symbol": "IDEA", "exchange": "NSE", "instrument_type": "STOCK", "quantity": 5},
+    ],
+    portfolio_name="My Portfolio",
+    start="2025-01-01",
+    end="2025-12-31",
+    interval="1d",
+    benchmark_symbol="NIFTY",
+    show_plots=True,
+    generate_html=True,
+    html_mode="detailed",
+)
+```
+
+Portfolio weights are derived from:
+
+- `quantity * first available price` for each symbol
+- then normalized into start-date portfolio weights
+
+This means the portfolio report reflects the quantity mix entered by the user, not equal weights unless the quantities and prices imply that.
+
 ## Quick Start (Popup UI)
 
 If you want users to only call one function and fill details in a popup:
@@ -146,15 +197,24 @@ import nubrastats as ns
 ns.ui.launch_analyzer_ui()
 ```
 
-This opens a small UI form for:
+This opens a popup UI for:
 
-- symbol/exchange/type
+- primary stock analysis inputs
+- optional portfolio mode with multiple symbols + quantity
 - date range (calendar picker) and interval
 - benchmark options
 - plot popup options
 - optional PNG/HTML output options
+- configurable Risk-Free Rate (%) field
 
 After clicking **Generate Report**, the library handles authentication, analysis, and report generation internally.
+
+UI behavior:
+
+- when only primary symbol mode is used, the generated HTML title defaults to `Nubra Stock Analysis`
+- when portfolio mode is enabled, the generated HTML title defaults to `Nubra Portfolio Report`
+- stock/instrument inputs are forced to uppercase in the UI
+- UI instrument dropdowns are limited to `STOCK` and `INDEX`
 
 `.env` credential note for popup/auth flows:
 
@@ -163,6 +223,8 @@ After clicking **Generate Report**, the library handles authentication, analysis
 - recommended format:
   - `PHONE_NO="9999999999"`
   - `MPIN="1234"`
+
+If credentials are missing, the popup UI now asks for phone / OTP / TOTP / MPIN in modal dialogs instead of waiting silently in the terminal.
 
 When popup plot display is enabled, charts open in one viewer with **Previous/Next**
 navigation and keyboard arrow support.
@@ -333,7 +395,7 @@ analyze_symbol(
     benchmark_symbol: str | None = None,
     benchmark_exchange: str = "NSE",
     benchmark_instrument_type: str = "INDEX",
-    rf: float = 0.0,
+    rf: float = 0.06,
     periods_per_year: int = 252,
     show_plots: bool = True,
     save_plots: bool = False,
@@ -357,6 +419,35 @@ Returns dictionary keys:
 - `html_opened` (`True` if browser auto-open succeeded)
 - `html_mode` (`"basic"` or `"detailed"`)
 
+### `analyze_portfolio(...) -> dict[str, Any]`
+
+One-call portfolio pipeline for multiple symbols and quantities.
+
+Behavior:
+
+1. normalize portfolio items
+2. fetch close prices for each symbol
+3. align dates across symbols
+4. compute start-date value from `quantity * first price`
+5. derive portfolio weights
+6. build portfolio value, returns, equity, and optional benchmark comparison
+7. generate plots and HTML report just like single-symbol flow
+
+Important input rule:
+
+- quantity must be greater than `0` for every portfolio item
+- duplicate symbol/exchange/type rows are rejected
+
+Returns dictionary keys include:
+
+- `prices` / `component_prices`
+- `returns`, `equity`
+- `portfolio_items`
+- `portfolio_weights`
+- `metrics`
+- `benchmark_prices`, `benchmark_returns`, `benchmark_equity`
+- `html_path`, `html_opened`, `plot_paths`
+
 ## Module: `nubrastats.ui`
 
 Purpose: popup-based minimal UX for end users (no manual plumbing code).
@@ -367,8 +458,10 @@ Holds all UI/run configuration fields such as:
 
 - environment + login flags
 - primary symbol settings
+- portfolio settings (`portfolio_enabled`, `portfolio_name`, `portfolio_items`)
 - benchmark settings
 - plot/report options
+- `risk_free_rate` (UI default `6.0`, interpreted as percent)
 
 ### `run_from_config(config, *, md_client=None) -> dict[str, Any]`
 
@@ -512,11 +605,11 @@ Annualized compounded growth rate.
 
 Sample standard deviation; annualized if requested.
 
-### `sharpe(returns, rf=0.0, periods_per_year=252) -> float`
+### `sharpe(returns, rf=0.06, periods_per_year=252) -> float`
 
 Sharpe ratio using per-period risk-free conversion.
 
-### `sortino(returns, rf=0.0, periods_per_year=252) -> float`
+### `sortino(returns, rf=0.06, periods_per_year=252) -> float`
 
 Sortino ratio using downside deviation only.
 
@@ -556,7 +649,7 @@ summary(
     returns: pd.Series | None = None,
     equity: pd.Series | None = None,
     trades: pd.DataFrame | None = None,
-    rf: float = 0.0,
+    rf: float = 0.06,
     periods_per_year: int = 252,
 ) -> pd.Series
 ```
@@ -633,7 +726,7 @@ metrics(
     equity: pd.Series | None = None,
     trades: pd.DataFrame | None = None,
     benchmark: pd.Series | None = None,
-    rf: float = 0.0,
+    rf: float = 0.06,
     periods_per_year: int = 252,
     display: bool = True,
     precision: int = 4,
@@ -677,7 +770,7 @@ html(
     equity: pd.Series | None = None,
     trades: pd.DataFrame | None = None,
     benchmark: pd.Series | None = None,
-    rf: float = 0.0,
+    rf: float = 0.06,
     periods_per_year: int = 252,
     title: str = "Nubra Strategy Tearsheet",
     output: str | None = None,
@@ -761,3 +854,6 @@ python -m twine check dist/*
 - The quick script is for minimal user lines.
 - The static script is intentionally larger for diagnostics and validation checks.
 - This project is Nubra-native and does not depend on external market-data providers.
+- Popup UI currently defaults Risk-Free Rate to `6%`, but users can override it.
+- Detailed HTML report is the default mode in the popup UI.
+- Portfolio mode in the popup UI generates `Nubra Portfolio Report`; single-symbol mode generates `Nubra Stock Analysis` by default.
