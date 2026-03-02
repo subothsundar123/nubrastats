@@ -69,6 +69,48 @@ pip install -e .[dev]
   - HTML templates under `src/nubrastats/templates`
   - project metadata (`pyproject.toml`, `README.md`, `LICENSE`)
 
+## Quick Start (Popup UI)
+
+If you want users to only call one function and fill details in a popup:
+
+```python
+import nubrastats as ns
+
+ns.ui.launch_analyzer_ui()
+```
+
+This opens a popup UI for:
+
+- primary stock analysis inputs
+- optional portfolio mode with multiple symbols + quantity
+- date range (calendar picker) and interval
+- benchmark options
+- plot popup options
+- optional PNG/HTML output options
+- configurable Risk-Free Rate (%) field
+
+After clicking **Generate Report**, the library handles authentication, analysis, and report generation internally.
+
+UI behavior:
+
+- when only primary symbol mode is used, the generated HTML title defaults to `Nubra Stock Analysis`
+- when portfolio mode is enabled, the generated HTML title defaults to `Nubra Portfolio Report`
+- stock/instrument inputs are forced to uppercase in the UI
+- UI instrument dropdowns are limited to `STOCK` and `INDEX`
+
+`.env` credential note for popup/auth flows:
+
+- keep a `.env` file in project root or `examples/.env`
+- use keys exactly: `PHONE_NO` and `MPIN`
+- recommended format:
+  - `PHONE_NO="9999999999"`
+  - `MPIN="1234"`
+
+If credentials are missing, the popup UI now asks for phone / OTP / TOTP / MPIN in modal dialogs instead of waiting silently in the terminal.
+
+When popup plot display is enabled, charts open in one viewer with **Previous/Next**
+navigation and keyboard arrow support.
+
 ## Quick Start (Minimal)
 
 ```python
@@ -186,48 +228,6 @@ Portfolio weights are derived from:
 - then normalized into start-date portfolio weights
 
 This means the portfolio report reflects the quantity mix entered by the user, not equal weights unless the quantities and prices imply that.
-
-## Quick Start (Popup UI)
-
-If you want users to only call one function and fill details in a popup:
-
-```python
-import nubrastats as ns
-
-ns.ui.launch_analyzer_ui()
-```
-
-This opens a popup UI for:
-
-- primary stock analysis inputs
-- optional portfolio mode with multiple symbols + quantity
-- date range (calendar picker) and interval
-- benchmark options
-- plot popup options
-- optional PNG/HTML output options
-- configurable Risk-Free Rate (%) field
-
-After clicking **Generate Report**, the library handles authentication, analysis, and report generation internally.
-
-UI behavior:
-
-- when only primary symbol mode is used, the generated HTML title defaults to `Nubra Stock Analysis`
-- when portfolio mode is enabled, the generated HTML title defaults to `Nubra Portfolio Report`
-- stock/instrument inputs are forced to uppercase in the UI
-- UI instrument dropdowns are limited to `STOCK` and `INDEX`
-
-`.env` credential note for popup/auth flows:
-
-- keep a `.env` file in project root or `examples/.env`
-- use keys exactly: `PHONE_NO` and `MPIN`
-- recommended format:
-  - `PHONE_NO="9999999999"`
-  - `MPIN="1234"`
-
-If credentials are missing, the popup UI now asks for phone / OTP / TOTP / MPIN in modal dialogs instead of waiting silently in the terminal.
-
-When popup plot display is enabled, charts open in one viewer with **Previous/Next**
-navigation and keyboard arrow support.
 
 ## Input Conventions
 
