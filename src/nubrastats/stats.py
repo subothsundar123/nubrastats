@@ -127,7 +127,7 @@ def summary(
     returns: pd.Series | None = None,
     equity: pd.Series | None = None,
     trades: pd.DataFrame | None = None,
-    rf: float = 0.0,
+    rf: float = 0.06,
     periods_per_year: int = 252,
 ) -> pd.Series:
     if returns is None:

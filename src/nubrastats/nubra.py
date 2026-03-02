@@ -284,16 +284,20 @@ def fetch_close_series(
     if series.empty:
         message = getattr(response, "message", "No response message")
         raise ValueError(
-            f"No close data for {str(symbol).upper()} "
-            f"[{str(exchange).upper()}/{str(instrument_type).upper()}] ({message})"
+            f"Unable to fetch price data for {str(symbol).upper()} "
+            f"[{str(exchange).upper()}/{str(instrument_type).upper()}]. "
+            f"The symbol may be invalid, unsupported, or unavailable in the selected environment/date range "
+            f"(API message: {message})."
         )
 
     series = series[(series.index >= start_ts) & (series.index <= end_ts)]
     if series.empty:
         message = getattr(response, "message", "No response message")
         raise ValueError(
-            f"No close data in selected date range for {str(symbol).upper()} "
-            f"[{str(exchange).upper()}/{str(instrument_type).upper()}] ({message})"
+            f"No price data was available for {str(symbol).upper()} "
+            f"[{str(exchange).upper()}/{str(instrument_type).upper()}] in the selected date range. "
+            f"Check the symbol, market, interval, and dates "
+            f"(API message: {message})."
         )
     return series
 
@@ -361,7 +365,7 @@ def analyze_portfolio(
     benchmark_symbol: str | None = None,
     benchmark_exchange: str = "NSE",
     benchmark_instrument_type: str = "INDEX",
-    rf: float = 0.0,
+    rf: float = 0.06,
     periods_per_year: int = 252,
     show_plots: bool = True,
     save_plots: bool = False,
@@ -382,16 +386,21 @@ def analyze_portfolio(
         key = f"{item.symbol}|{item.exchange}|{item.instrument_type}"
         ordered_keys.append(key)
         qty_map[key] = float(item.quantity)
-        series = fetch_close_series(
-            md_client,
-            symbol=item.symbol,
-            exchange=item.exchange,
-            instrument_type=item.instrument_type,
-            start=start,
-            end=end,
-            interval=interval,
-            price_scale=price_scale,
-        )
+        try:
+            series = fetch_close_series(
+                md_client,
+                symbol=item.symbol,
+                exchange=item.exchange,
+                instrument_type=item.instrument_type,
+                start=start,
+                end=end,
+                interval=interval,
+                price_scale=price_scale,
+            )
+        except Exception as exc:
+            raise ValueError(
+                f"Portfolio symbol failed: {item.symbol} [{item.exchange}/{item.instrument_type}]. {exc}"
+            ) from exc
         price_series.append(series.rename(key))
 
     components = pd.concat(price_series, axis=1, join="inner").dropna()
@@ -422,16 +431,22 @@ def analyze_portfolio(
     benchmark_equity: pd.Series | None = None
     benchmark_prices: pd.Series | None = None
     if benchmark_symbol:
-        benchmark_prices = fetch_close_series(
-            md_client,
-            symbol=benchmark_symbol,
-            exchange=benchmark_exchange,
-            instrument_type=benchmark_instrument_type,
-            start=start,
-            end=end,
-            interval=interval,
-            price_scale=price_scale,
-        )
+        try:
+            benchmark_prices = fetch_close_series(
+                md_client,
+                symbol=benchmark_symbol,
+                exchange=benchmark_exchange,
+                instrument_type=benchmark_instrument_type,
+                start=start,
+                end=end,
+                interval=interval,
+                price_scale=price_scale,
+            )
+        except Exception as exc:
+            raise ValueError(
+                f"Benchmark symbol failed: {str(benchmark_symbol).upper()} "
+                f"[{str(benchmark_exchange).upper()}/{str(benchmark_instrument_type).upper()}]. {exc}"
+            ) from exc
         aligned = pd.concat([portfolio_value, benchmark_prices], axis=1, join="inner").dropna()
         if aligned.empty:
             raise ValueError("No overlapping timestamps between portfolio and benchmark symbols")
@@ -581,7 +596,7 @@ def analyze_symbol(
     benchmark_symbol: str | None = None,
     benchmark_exchange: str = "NSE",
     benchmark_instrument_type: str = "INDEX",
-    rf: float = 0.0,
+    rf: float = 0.06,
     periods_per_year: int = 252,
     show_plots: bool = True,
     save_plots: bool = False,
@@ -597,16 +612,22 @@ def analyze_symbol(
     Minimal end-user pipeline:
     fetch prices -> compute returns/equity -> metrics -> optional plots/html.
     """
-    primary_prices = fetch_close_series(
-        md_client,
-        symbol=symbol,
-        exchange=exchange,
-        instrument_type=instrument_type,
-        start=start,
-        end=end,
-        interval=interval,
-        price_scale=price_scale,
-    )
+    try:
+        primary_prices = fetch_close_series(
+            md_client,
+            symbol=symbol,
+            exchange=exchange,
+            instrument_type=instrument_type,
+            start=start,
+            end=end,
+            interval=interval,
+            price_scale=price_scale,
+        )
+    except Exception as exc:
+        raise ValueError(
+            f"Primary symbol failed: {str(symbol).upper()} "
+            f"[{str(exchange).upper()}/{str(instrument_type).upper()}]. {exc}"
+        ) from exc
     returns, equity = _returns_from_prices(primary_prices)
 
     benchmark_returns: pd.Series | None = None
@@ -614,16 +635,22 @@ def analyze_symbol(
     benchmark_prices: pd.Series | None = None
 
     if benchmark_symbol:
-        benchmark_prices = fetch_close_series(
-            md_client,
-            symbol=benchmark_symbol,
-            exchange=benchmark_exchange,
-            instrument_type=benchmark_instrument_type,
-            start=start,
-            end=end,
-            interval=interval,
-            price_scale=price_scale,
-        )
+        try:
+            benchmark_prices = fetch_close_series(
+                md_client,
+                symbol=benchmark_symbol,
+                exchange=benchmark_exchange,
+                instrument_type=benchmark_instrument_type,
+                start=start,
+                end=end,
+                interval=interval,
+                price_scale=price_scale,
+            )
+        except Exception as exc:
+            raise ValueError(
+                f"Benchmark symbol failed: {str(benchmark_symbol).upper()} "
+                f"[{str(benchmark_exchange).upper()}/{str(benchmark_instrument_type).upper()}]. {exc}"
+            ) from exc
         aligned = pd.concat([primary_prices, benchmark_prices], axis=1, join="inner").dropna()
         if aligned.empty:
             raise ValueError("No overlapping timestamps between primary and benchmark symbols")

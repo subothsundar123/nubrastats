@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import builtins
 import os
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import date
 from pathlib import Path
@@ -10,6 +12,7 @@ from . import nubra, plots
 
 _ENV_NAMES = ("UAT", "PROD", "DEV", "STAGING")
 _INTERVAL_ORDER = ("1s", "1m", "2m", "3m", "5m", "15m", "30m", "1h", "1d", "1w", "1mt")
+_UI_INSTRUMENT_TYPES = ("STOCK", "INDEX")
 
 
 @dataclass(slots=True)
@@ -40,10 +43,11 @@ class AnalyzerUIConfig:
     generate_html: bool = True
     open_html: bool = True
     html_output: str = "nubrastats-ui-report.html"
-    html_mode: str = "basic"
+    html_mode: str = "detailed"
     title: str = "Nubra UI Report"
 
     display_metrics: bool = True
+    risk_free_rate: float = 6.0
 
 
 @dataclass(slots=True)
@@ -54,11 +58,11 @@ class PortfolioItem:
     instrument_type: str = "STOCK"
 
 
-def _to_date_or_today(value: str) -> date:
+def _to_date_or_fallback(value: str, fallback: date) -> date:
     try:
         return date.fromisoformat(value.strip())
     except ValueError:
-        return date.today()
+        return fallback
 
 
 def _resolve_env_file() -> Path | None:
@@ -104,6 +108,16 @@ def _seed_env_aliases() -> None:
     if mpin:
         os.environ["MPIN"] = mpin
         os.environ["mpin"] = mpin
+
+
+def _bind_uppercase_var(var: Any) -> None:
+    def _normalize(*_args: Any) -> None:
+        value = var.get()
+        upper = str(value).upper()
+        if value != upper:
+            var.set(upper)
+
+    var.trace_add("write", _normalize)
 
 
 def _build_plot_figures(result: dict[str, Any], *, symbol: str) -> list[tuple[str, Any]]:
@@ -212,7 +226,171 @@ def _open_plot_navigator(parent: Any, figures: list[tuple[str, Any]]) -> None:
     _render()
 
 
-def _create_market_data_client(*, env: str, use_env_creds: bool, use_totp_login: bool) -> Any:
+
+@dataclass(slots=True)
+class _PromptContext:
+    env: str
+    use_env_creds: bool
+    use_totp_login: bool
+    phone: str | None = None
+    mpin: str | None = None
+
+
+def _prompt_title(prompt: str) -> str:
+    raw = prompt.lower()
+    if "otp" in raw and "totp" not in raw:
+        return "Enter OTP"
+    if "totp" in raw:
+        return "Enter TOTP"
+    if "mpin" in raw or "pin" in raw:
+        return "Enter MPIN"
+    if "phone" in raw:
+        return "Enter Phone Number"
+    if "password" in raw:
+        return "Enter Password"
+    return "Enter Value"
+
+
+def _prompt_label(prompt: str) -> str:
+    clean = " ".join(str(prompt).strip().split())
+    return clean or "Enter value"
+
+
+def _initial_prompt_value(prompt: str, ctx: _PromptContext) -> str:
+    raw = prompt.lower()
+    if "phone" in raw and ctx.phone:
+        return ctx.phone
+    if ("mpin" in raw or "pin" in raw) and ctx.mpin:
+        return ctx.mpin
+    return ""
+
+
+def _should_mask_prompt(prompt: str) -> bool:
+    raw = prompt.lower()
+    return any(token in raw for token in ("otp", "totp", "mpin", "pin", "password"))
+
+
+def _friendly_error_message(exc: Exception) -> str:
+    message = str(exc).strip()
+    prefix_map = {
+        "Primary symbol failed:": "Invalid or unavailable primary symbol entered",
+        "Benchmark symbol failed:": "Invalid or unavailable benchmark symbol entered",
+        "Portfolio symbol failed:": "Invalid or unavailable portfolio symbol entered",
+    }
+    for prefix, label in prefix_map.items():
+        if message.startswith(prefix):
+            rest = message[len(prefix):].strip()
+            symbol_part, sep, detail = rest.partition('.')
+            symbol_text = symbol_part.strip()
+            if sep:
+                detail = detail.strip()
+            else:
+                detail = ""
+            lines = [f"{label}: {symbol_text}"]
+            if detail:
+                lines.append("")
+                lines.append(detail)
+            return "\n".join(lines)
+    return message
+
+
+def _prompt_popup(parent: Any, prompt: str, *, ctx: _PromptContext) -> str:
+    import tkinter as tk
+    from tkinter import ttk
+
+    top = tk.Toplevel(parent)
+    top.title(_prompt_title(prompt))
+    top.transient(parent)
+    top.grab_set()
+    top.resizable(False, False)
+    top.geometry("430x190")
+    top.minsize(430, 190)
+
+    value_var = tk.StringVar(value=_initial_prompt_value(prompt, ctx))
+    result: dict[str, str | None] = {"value": None}
+
+    wrap = ttk.Frame(top, padding=16)
+    wrap.pack(fill=tk.BOTH, expand=True)
+    ttk.Label(
+        wrap,
+        text="Nubra login requires additional input to continue.",
+        font=("Segoe UI", 10, "bold"),
+        wraplength=380,
+    ).pack(anchor="w", pady=(0, 10))
+    ttk.Label(wrap, text=_prompt_label(prompt), wraplength=380).pack(anchor="w")
+    entry = ttk.Entry(wrap, textvariable=value_var, width=34)
+    if _should_mask_prompt(prompt):
+        entry.configure(show="*")
+    entry.pack(anchor="w", fill=tk.X, pady=(8, 10))
+
+    note = "This prompt came from Nubra authentication."
+    if "phone" in prompt.lower():
+        note = "Enter the phone number linked to your Nubra account."
+    elif "otp" in prompt.lower() and "totp" not in prompt.lower():
+        note = "Enter the OTP received on your phone."
+    elif "totp" in prompt.lower():
+        note = "Enter the current authenticator TOTP code."
+    elif "mpin" in prompt.lower() or "pin" in prompt.lower():
+        note = "Enter your Nubra MPIN."
+    ttk.Label(wrap, text=note, foreground="#555555", wraplength=380).pack(anchor="w")
+
+    btns = ttk.Frame(wrap)
+    btns.pack(anchor="e", pady=(12, 0), fill=tk.X)
+
+    def _submit() -> None:
+        value = value_var.get().strip()
+        if not value:
+            return
+        result["value"] = value
+        top.destroy()
+
+    def _cancel() -> None:
+        top.destroy()
+
+    ttk.Button(btns, text="Cancel", command=_cancel).pack(side=tk.RIGHT)
+    ttk.Button(btns, text="Continue", command=_submit).pack(side=tk.RIGHT, padx=(0, 8))
+    top.bind("<Return>", lambda _event: _submit())
+    top.bind("<Escape>", lambda _event: _cancel())
+    entry.focus_set()
+    top.wait_window()
+
+    if result["value"] is None:
+        raise ValueError("Authentication cancelled by user")
+
+    value = str(result["value"])
+    raw = prompt.lower()
+    if "phone" in raw:
+        ctx.phone = value
+        os.environ["PHONE_NO"] = value
+        os.environ["phone"] = value
+    elif "mpin" in raw or "pin" in raw:
+        ctx.mpin = value
+        os.environ["MPIN"] = value
+        os.environ["mpin"] = value
+    return value
+
+
+@contextmanager
+def _patch_sdk_prompts(*, parent: Any, ctx: _PromptContext):
+    original_input = builtins.input
+
+    def _popup_input(prompt: str = "") -> str:
+        return _prompt_popup(parent, prompt, ctx=ctx)
+
+    builtins.input = _popup_input
+    try:
+        yield
+    finally:
+        builtins.input = original_input
+
+
+def _create_market_data_client(
+    *,
+    env: str,
+    use_env_creds: bool,
+    use_totp_login: bool,
+    prompt_parent: Any | None = None,
+) -> Any:
     from nubra_python_sdk.marketdata.market_data import MarketData
     from nubra_python_sdk.start_sdk import InitNubraSdk, NubraEnv
 
@@ -231,26 +409,48 @@ def _create_market_data_client(*, env: str, use_env_creds: bool, use_totp_login:
         if env_file is not None:
             _load_env_file(env_file)
         _seed_env_aliases()
-        if not (os.environ.get("PHONE_NO") and os.environ.get("MPIN")):
+
+    ctx = _PromptContext(
+        env=env_key,
+        use_env_creds=use_env_creds,
+        use_totp_login=use_totp_login,
+        phone=os.environ.get("PHONE_NO") or os.environ.get("phone"),
+        mpin=os.environ.get("MPIN") or os.environ.get("mpin"),
+    )
+
+    if prompt_parent is not None:
+        with _patch_sdk_prompts(parent=prompt_parent, ctx=ctx):
+            sdk = InitNubraSdk(
+                env=env_map[env_key],
+                env_creds=use_env_creds,
+                totp_login=use_totp_login,
+            )
+    else:
+        if use_env_creds and not (ctx.phone and ctx.mpin):
             raise ValueError(
                 "env_creds=True but PHONE_NO/MPIN not found. "
                 "Place a .env file with PHONE_NO=\"...\" and MPIN=\"...\" "
                 "in project root or examples/."
             )
-
-    sdk = InitNubraSdk(
-        env=env_map[env_key],
-        env_creds=use_env_creds,
-        totp_login=use_totp_login,
-    )
+        sdk = InitNubraSdk(
+            env=env_map[env_key],
+            env_creds=use_env_creds,
+            totp_login=use_totp_login,
+        )
     return MarketData(sdk)
 
 
-def run_from_config(config: AnalyzerUIConfig, *, md_client: Any | None = None) -> dict[str, Any]:
+def run_from_config(
+    config: AnalyzerUIConfig,
+    *,
+    md_client: Any | None = None,
+    prompt_parent: Any | None = None,
+) -> dict[str, Any]:
     client = md_client or _create_market_data_client(
         env=config.env,
         use_env_creds=config.use_env_creds,
         use_totp_login=config.use_totp_login,
+        prompt_parent=prompt_parent,
     )
 
     benchmark_symbol = config.benchmark_symbol.strip().upper() if config.benchmark_enabled else None
@@ -270,6 +470,7 @@ def run_from_config(config: AnalyzerUIConfig, *, md_client: Any | None = None) -
         "html_mode": config.html_mode.strip().lower() or "basic",
         "title": config.title.strip() or None,
         "display_metrics": config.display_metrics,
+        "rf": float(config.risk_free_rate) / 100.0,
     }
 
     if config.portfolio_enabled:
@@ -300,7 +501,7 @@ def launch_analyzer_ui(initial: AnalyzerUIConfig | None = None) -> None:
     except Exception:
         CalendarDateEntry = None
 
-    cfg = initial or AnalyzerUIConfig()
+    cfg = initial or AnalyzerUIConfig(start="2025-01-01", end=date.today().isoformat())
 
     root = tk.Tk()
     root.title("NubraStats Analyzer")
@@ -350,6 +551,20 @@ def launch_analyzer_ui(initial: AnalyzerUIConfig | None = None) -> None:
     html_mode_var = tk.StringVar(value=cfg.html_mode)
     title_var = tk.StringVar(value=cfg.title)
     display_metrics_var = tk.BooleanVar(value=cfg.display_metrics)
+    risk_free_rate_var = tk.StringVar(value=f"{cfg.risk_free_rate:g}")
+
+    for upper_var in (
+        symbol_var,
+        exchange_var,
+        instrument_var,
+        portfolio_symbol_var,
+        portfolio_exchange_var,
+        portfolio_type_var,
+        bench_symbol_var,
+        bench_exchange_var,
+        bench_type_var,
+    ):
+        _bind_uppercase_var(upper_var)
 
     ttk.Label(frame, text="NubraStats One-Click Analyzer", font=("Segoe UI", 13, "bold")).grid(
         row=0,
@@ -438,14 +653,17 @@ def launch_analyzer_ui(initial: AnalyzerUIConfig | None = None) -> None:
     ) -> tk.Widget:
         ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", pady=3)
         if CalendarDateEntry is not None:
+            fallback = date.today() if "End Date" in label else date(2025, 1, 1)
+            selected = _to_date_or_fallback(var.get(), fallback)
             picker = CalendarDateEntry(
                 parent,
                 textvariable=var,
                 width=width,
                 date_pattern="yyyy-mm-dd",
             )
-            picker.set_date(_to_date_or_today(var.get()))
             picker.grid(row=row, column=1, sticky="w", pady=3)
+            picker.set_date(selected)
+            var.set(selected.isoformat())
             return picker
         entry = ttk.Entry(parent, textvariable=var, width=width)
         entry.grid(row=row, column=1, sticky="w", pady=3)
@@ -478,7 +696,7 @@ def launch_analyzer_ui(initial: AnalyzerUIConfig | None = None) -> None:
     ttk.Label(primary_box, text="Instrument Type").grid(row=prim_row, column=0, sticky="w", pady=3)
     primary_instrument_combo = ttk.Combobox(
         primary_box,
-        values=sorted(nubra.NUBRA_TYPES),
+        values=_UI_INSTRUMENT_TYPES,
         textvariable=instrument_var,
         width=12,
         state="readonly",
@@ -550,7 +768,7 @@ def launch_analyzer_ui(initial: AnalyzerUIConfig | None = None) -> None:
     ttk.Label(portfolio_editor, text="Type").grid(row=0, column=4, sticky="w", pady=2)
     portfolio_type_combo = ttk.Combobox(
         portfolio_editor,
-        values=sorted(nubra.NUBRA_TYPES),
+        values=_UI_INSTRUMENT_TYPES,
         textvariable=portfolio_type_var,
         width=10,
         state="readonly",
@@ -679,7 +897,7 @@ def launch_analyzer_ui(initial: AnalyzerUIConfig | None = None) -> None:
     ttk.Label(bench_box, text="Benchmark Type").grid(row=bench_row, column=0, sticky="w", pady=3)
     bench_type_combo = ttk.Combobox(
         bench_box,
-        values=sorted(nubra.NUBRA_TYPES),
+        values=_UI_INSTRUMENT_TYPES,
         textvariable=bench_type_var,
         width=12,
         state="readonly",
@@ -725,6 +943,8 @@ def launch_analyzer_ui(initial: AnalyzerUIConfig | None = None) -> None:
     html_entry = add_entry(run_box, "HTML Output File", html_output_var, run_row, width=34)
     run_row += 1
     add_entry(run_box, "Report Title", title_var, run_row, width=34)
+    run_row += 1
+    add_entry(run_box, "Risk-Free Rate (%)", risk_free_rate_var, run_row, width=12)
     run_row += 1
     ttk.Checkbutton(run_box, text="Display metrics in terminal", variable=display_metrics_var).grid(
         row=run_row, column=0, columnspan=2, sticky="w", pady=2
@@ -797,6 +1017,15 @@ def launch_analyzer_ui(initial: AnalyzerUIConfig | None = None) -> None:
     _toggle_strategy_mode()
 
     def _build_config() -> AnalyzerUIConfig:
+        portfolio_enabled = portfolio_enabled_var.get()
+        raw_title = title_var.get().strip()
+        default_titles = {"Nubra UI Report", "Nubra Stock Analysis", "Nubra Portfolio Report"}
+        resolved_title = raw_title
+        if not raw_title or raw_title in default_titles:
+            resolved_title = (
+                "Nubra Portfolio Report" if portfolio_enabled else "Nubra Stock Analysis"
+            )
+
         return AnalyzerUIConfig(
             env=env_var.get(),
             use_env_creds=env_creds_var.get(),
@@ -804,7 +1033,7 @@ def launch_analyzer_ui(initial: AnalyzerUIConfig | None = None) -> None:
             symbol=symbol_var.get(),
             exchange=exchange_var.get(),
             instrument_type=instrument_var.get(),
-            portfolio_enabled=portfolio_enabled_var.get(),
+            portfolio_enabled=portfolio_enabled,
             portfolio_name=portfolio_name_var.get(),
             portfolio_items=[
                 {
@@ -829,8 +1058,9 @@ def launch_analyzer_ui(initial: AnalyzerUIConfig | None = None) -> None:
             open_html=open_html_var.get(),
             html_output=html_output_var.get(),
             html_mode=html_mode_var.get(),
-            title=title_var.get(),
+            title=resolved_title,
             display_metrics=display_metrics_var.get(),
+            risk_free_rate=float(risk_free_rate_var.get() or 6),
         )
 
     def on_generate() -> None:
@@ -843,7 +1073,7 @@ def launch_analyzer_ui(initial: AnalyzerUIConfig | None = None) -> None:
             if ui_cfg.portfolio_enabled and not ui_cfg.portfolio_items:
                 raise ValueError("Portfolio mode is enabled, but no portfolio items were added")
             run_cfg = replace(ui_cfg, show_plots=False)
-            result = run_from_config(run_cfg)
+            result = run_from_config(run_cfg, prompt_parent=root)
             lines = ["Analysis completed."]
             if ui_cfg.show_plots:
                 label_hint = ui_cfg.portfolio_name if ui_cfg.portfolio_enabled else ui_cfg.symbol
@@ -861,7 +1091,7 @@ def launch_analyzer_ui(initial: AnalyzerUIConfig | None = None) -> None:
             messagebox.showinfo("NubraStats", "\n".join(lines))
         except Exception as exc:
             status_var.set("Failed.")
-            messagebox.showerror("NubraStats Error", str(exc))
+            messagebox.showerror("NubraStats Error", _friendly_error_message(exc))
         finally:
             generate_btn.configure(state="normal")
 
